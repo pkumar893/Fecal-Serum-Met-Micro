@@ -35,378 +35,11 @@ library(corrplot)
 library(ggforce)
 library(ggrepel)
 library(Boruta)
-```
-
-## Comparison of Important Fecal Microbiota (2022 vs 2024)
-```{r warning=FALSE, message=FALSE, include=FALSE}
-Fecal1 <- read_excel("E:/Ajit data analysis/Tac/Fecal metablomics 2022 set 1.xlsx")
-
-metabolites <- colnames(Fecal1)[-1]
-
-
-clean_names <- gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolites)))
-
-clean_names <- gsub("^[0-9]+_|_[0-9]+_|_[0-9]+$|[0-9]+_", "", clean_names)
-
-# gsub("^_|_$", "", gsub("_+", "_", gsub("[() ]", "_", metabolites)))
-# gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolites)))
-
-colnames(Fecal1)[-1] <- clean_names
-
-Fecal1 <- Fecal1 %>%
-  mutate(
-    Group = case_when(
-      grepl("WT-Sham", Sample) ~ "Sham",
-      grepl("WT-TAC-FMT-V", Sample) ~ "TAC_FMT_V",
-      grepl("WT-TAC-FMT-S", Sample) ~ "TAC_FMT_S",
-      grepl("WT-TAC-V", Sample) ~ "TAC_V",
-      grepl("WT-TAC-", Sample) & !grepl("FMT", Sample) & !grepl("-V", Sample) ~ "TAC",
-      TRUE ~ "Other"
-    ), .after = "Sample"
-  ) %>% 
-  mutate(Group = as.factor(Group))
-
-sample_info <- Fecal1 %>% 
-  select(Sample, Group) %>% 
-  mutate(Group = as.factor(Group))
-
-metabolite_fecal2022 <- Fecal1 %>% select(-Group)
-metabolite_fecal2022 <- metabolite_fecal2022 %>% column_to_rownames("Sample")
-
-mice_info <- read_excel("E:/Ajit data analysis/Tac/Tac ready to use.xlsx", 
-                        sheet = 6, 
-                        range = "A2:N31",
-                        col_names = TRUE) %>% 
-  select(-S.No, -Gender)
-colnames(mice_info)[colnames(mice_info) == "Group"] <- "Sample"
-  
-integrated_data <- Fecal1 %>%
-  left_join(mice_info, by = "Sample") %>% 
-  select(-Purpose, -`Peak LS`, -`EF (%)`) %>% 
-  rename(
-    LV_Thickness = `LV Thickness (mm)`,
-    LVW_mg = `LVW (mg)`,
-    LVW_TL = `LVW/TL (mg/mm)`,
-    HW_TL = `HW/TL (mg/mm)`,
-    FS = `FS%`,
-    HW_mg = `HW (mg)`,
-    GLS = `GLS (%)`
-  ) %>% 
-  relocate(HW_mg, .after = Sample)
-head(integrated_data, 2)
-
 library(kableExtra)
-predictors <- setdiff(colnames(integrated_data), 
-                      c("Sample", "Group", "LV_Thickness", 
-                        "LVW_mg", "LVW_TL","HW_TL", "FS", "EF", "GLS", "HW_mg"))
-predictors
-
-
-n_pad <- 2 - length(predictors) %% 2
-if (n_pad < 2) predictors <- c(predictors, rep("", n_pad))
-
-predictor_matrix <- matrix(predictors, ncol = 2, byrow = TRUE)
-
-kable(predictor_matrix, col.names = c("Predictors", "Predictors"))
-
-set.seed(999)
-rf_data <- integrated_data[, c(predictors, "HW_mg")]
-rf_data <- na.omit(rf_data) 
-boruta_output <- Boruta(HW_mg ~ ., data = rf_data, doTrace = 2, maxRuns = 500, ntree = 1000)
-attribute_Boruta <- attStats(boruta_output)
-confirmed_var_fecal2022 <- getSelectedAttributes(boruta_output, withTentative = FALSE)
-confirmed_var_fecal2022
-# kable(confirmed_var_fecal2022, col.names = "IMPORTANT PRESDICTORS")
-
-boruta_list <- replicate(3, {
-  Boruta(HW_mg ~ ., data = rf_data, maxRuns = 500, ntree = 1000)
-}, simplify = FALSE)
-
-# confirmed metabolites from each run
-confirmed_lists <- lapply(boruta_list, function(b) {
-  rownames(attStats(b)[attStats(b)$decision == "Confirmed", ])
-})
-
-boruta_list
-vars_fecal2022 <- Reduce(intersect, confirmed_lists)
-kable(vars_fecal2022, col.names = "IMPORTANT PRESDICTORS")
-
-importance_fecal2022 <- attStats(boruta_output)
-
-importance_fecal2022 <- importance_fecal2022[order(-importance_fecal2022$meanImp), ]
-
-top15 <- head(importance_fecal2022, 15)
-
-table_F2022 <- data.frame(
-  Fecal_2022 = rownames(top15),
-  MeanImportance = top15$meanImp
-)
-
-print(table_F2022, row.names = FALSE)
-
 library(mgcv)
-formula <- as.formula(paste("HW_mg ~", paste0("s(", vars_fecal2022, ", by = Group)", collapse = " + ")))
-model <- gam(formula, data = integrated_data, method = "REML", select  = TRUE)
-summary(model)
-```
-
-```{r message=FALSE, warning=FALSE, include=FALSE}
-Fecal2024 <- read_excel("E:\\Ajit data analysis\\Tac\\fecal 2024\\Fecal metablomics 2024.xlsx")
-
-
-metabolites <- colnames(Fecal2024)[-1]
-
-
-clean_names <- gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolites)))
-
-clean_names <- gsub("^[0-9]+_|_[0-9]+_|_[0-9]+$|[0-9]+_", "", clean_names)
-
-# gsub("^_|_$", "", gsub("_+", "_", gsub("[() ]", "_", metabolites)))
-# gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolites)))
-
-colnames(Fecal2024)[-1] <- clean_names
-
-
-metabolites <- colnames(Fecal2024)[-c(1, 2)]
-clean_names <- gsub("[() ]", "_", metabolites)
-colnames(Fecal2024)[-c(1, 2)] <- clean_names
-
-Fecal2024 <- Fecal2024 %>%
-  mutate(
-    Group = case_when(
-      grepl("WT-Sham", Sample) ~ "Sham",
-      grepl("WT-TAC-Post-V", Sample) ~ "TAC_FMT_Post",
-      grepl("WT-TAC-V-Orn-Ty-DI-", Sample) ~ "TAC_V_Orn",
-      grepl("WT-TAC-V", Sample) ~ "TAC_V",
-      grepl("WT-TAC-", Sample) & !grepl("FMT", Sample) & !grepl("-V", Sample) ~ "TAC",
-      TRUE ~ "Other"
-    ), .after = "Sample"
-  ) %>% 
-  mutate(Group = as.factor(Group))
-
-sample_info <- Fecal2024 %>% 
-  select(Sample, Group) %>% 
-  mutate(Group = as.factor(Group))
-
-metabolite_Fecal2024 <- Fecal2024 %>% select(-Group)
-metabolite_Fecal2024 <- metabolite_Fecal2024 %>% column_to_rownames("Sample")
-
-mice_info <- read_excel("E:/Ajit data analysis/Tac/Tac ready to use.xlsx", 
-                        sheet = 6, 
-                        range = "A33:N62",
-                        col_names = TRUE) %>% 
-  select(-S.No, -Gender)
-
-colnames(mice_info)[colnames(mice_info) == "Group"] <- "Sample"
-  
-integrated_data <- Fecal2024 %>%
-  left_join(mice_info, by = "Sample") %>% 
-  select(-Purpose, -`Peak LS`, -`EF (%)`) %>% 
-  rename(
-    LV_Thickness = `LV Thickness (mm)`,
-    LVW_mg = `LVW (mg)`,
-    LVW_TL = `LVW/TL (mg/mm)`,
-    HW_TL = `HW/TL (mg/mm)`,
-    FS = `FS%`,
-    HW_mg = `HW (mg)`,
-    GLS = `GLS (%)`
-  ) %>% 
-  relocate(HW_mg, .after = Sample)
-head(integrated_data, 2)
-predictors <- setdiff(colnames(integrated_data), 
-                      c("Sample", "Group", "LV_Thickness", 
-                        "LVW_mg", "LVW_TL","HW_TL", "FS", "EF", "GLS", "HW_mg"))
-head(predictors, 10)
-set.seed(999)
-rf_data <- integrated_data[, c(predictors, "HW_mg")]
-rf_data <- na.omit(rf_data) 
-boruta_output <- Boruta(HW_mg ~ ., data = rf_data, doTrace = 2, maxRuns = 300, ntree = 1000)
-attribute_Boruta <- attStats(boruta_output)
-confirmed_var_fecal2024 <- getSelectedAttributes(boruta_output, withTentative = FALSE)
-# confirmed_var_fecal2024
-# kable(confirmed_var_fecal2024, col.names = "IMPORTANT PRESDICTORS")
-
-boruta_list <- replicate(3, {
-  Boruta(HW_mg ~ ., data = rf_data, maxRuns = 300, ntree = 1000)
-}, simplify = FALSE)
-
-# confirmed metabolites from each run
-confirmed_lists <- lapply(boruta_list, function(b) {
-  rownames(attStats(b)[attStats(b)$decision == "Confirmed", ])
-})
-
-boruta_list
-vars_fecal2024 <- Reduce(intersect, confirmed_lists)
-kable(vars_fecal2024, col.names = "IMPORTANT PRESDICTORS")
-
-importance_fecal2024 <- attStats(boruta_output)
-
-importance_fecal2024 <- importance_fecal2024[order(-importance_fecal2024$meanImp), ]
-
-top15 <- head(importance_fecal2024, 15)
-
-table_F2024 <- data.frame(
-  Fecal_2024 = rownames(top15),
-  MeanImportance = top15$meanImp
-)
-
-print(table_F2024, row.names = FALSE)
-
-formula <- as.formula(paste("HW_mg ~", paste0("s(", vars_fecal2024, ", by = Group)", collapse = " + ")))
-model_F2024 <- gam(formula, data = integrated_data, method = "REML", select  = TRUE)
-summary(model_F2024)
-```
-
-```{r}
-library(dplyr)
-library(gt)
-
-table_F2022$Row <- 1:nrow(table_F2022)
-table_F2024$Row <- 1:nrow(table_F2024)
-
-
-colnames(table_F2022) <- c("table_F2022", "MeanImportance_2022", "Row")
-colnames(table_F2024) <- c("table_F2024", "MeanImportance_2024", "Row")
-
-
-comparison_table <- full_join(table_F2022, table_F2024, by = "Row") %>%
-  select(table_F2022, MeanImportance_2022, table_F2024, MeanImportance_2024)
-
-
-gt_table <- comparison_table %>%
-  gt() %>%
-  tab_header(
-    title = "Comparison of Important Fecal Microbiota (2022 vs 2024)"
-  ) %>%
-  cols_label(
-    table_F2022 = "Microbiota",
-    MeanImportance_2022 = "Mean Importance",
-    table_F2024 = "Microbiota",
-    MeanImportance_2024 = "Mean Importance"
-  ) %>%
-  tab_spanner(
-    label = "2022",
-    columns = c(table_F2022, MeanImportance_2022)
-  ) %>%
-  tab_spanner(
-    label = "2024",
-    columns = c(table_F2024, MeanImportance_2024)
-  ) %>%
-  fmt_number(
-    columns = c(MeanImportance_2022, MeanImportance_2024),
-    decimals = 4
-  )
-
-gt_table
-```
-
-
-## Significance of Fecal Microbiota 2022 by Group
-```{r}
-library(dplyr)
 library(tidyr)
-library(stringr)
 library(gt)
-# Fecal 2022
-gam_summary <- summary(model)
-
-smooth_terms <- as.data.frame(gam_summary$s.table)
-
-smooth_terms$Term <- rownames(smooth_terms)
-
-smooth_terms <- smooth_terms %>%
-  mutate(
-    Metabolite = str_extract(Term, "(?<=s\\().+?(?=\\):)"),
-    Group = str_extract(Term, "(?<=\\:Group).*")
-  )
-
-smooth_terms <- smooth_terms %>%
-  mutate(Significance = case_when(
-    `p-value` < 0.001 ~ "***",
-    `p-value` < 0.01  ~ "**",
-    `p-value` < 0.05  ~ "*",
-    `p-value` < 0.1   ~ ".",
-    TRUE             ~ ""
-  ))
-
-smooth_wide <- smooth_terms %>%
-  select(Metabolite, Group, Significance) %>%
-  pivot_wider(names_from = Group, values_from = Significance)
-
-smooth_wide %>%
-  gt() %>%
-  tab_header(
-    title = "GAM Smooth Term Significance of Fecal 2022 Metabolites by Group",
-    subtitle = "Stars indicate level of significance for each metabolite-group interaction"
-  )%>%
-  cols_width(
-    Metabolite ~ px(200),
-    Sham ~ px(100),
-    TAC ~ px(100),
-    TAC_FMT_S ~ px(120),
-    TAC_FMT_V ~ px(120),
-    TAC_V ~ px(100)
-  ) %>% 
-    tab_footnote(
-    footnote = "p-value: ~0 ‘***’, 0.001 ‘**’, 0.01 ‘*’, 0.05 ‘.’, 0.1 ‘ ’, 1",
-    locations = cells_title(groups = "title")
-  )
-
 ```
-
-## Significance of Fecal Microbiota 2024 by Group
-```{r}
-library(dplyr)
-library(tidyr)
-library(stringr)
-library(gt)
-# Fecal 2022
-gam_summary <- summary(model_F2024)
-
-smooth_terms <- as.data.frame(gam_summary$s.table)
-
-smooth_terms$Term <- rownames(smooth_terms)
-
-smooth_terms <- smooth_terms %>%
-  mutate(
-    Metabolite = str_extract(Term, "(?<=s\\().+?(?=\\):)"),
-    Group = str_extract(Term, "(?<=\\:Group).*")
-  )
-
-smooth_terms <- smooth_terms %>%
-  mutate(Significance = case_when(
-    `p-value` < 0.001 ~ "***",
-    `p-value` < 0.01  ~ "**",
-    `p-value` < 0.05  ~ "*",
-    `p-value` < 0.1   ~ ".",
-    TRUE             ~ ""
-  ))
-
-smooth_wide <- smooth_terms %>%
-  select(Metabolite, Group, Significance) %>%
-  pivot_wider(names_from = Group, values_from = Significance)
-
-smooth_wide %>%
-  gt() %>%
-  tab_header(
-    title = "GAM Smooth Term Significance of Fecal 2024 Microbiota by Group",
-    subtitle = "Stars indicate level of significance for each metabolite-group interaction"
-  )%>%
-  cols_width(
-    Metabolite ~ px(200),
-    Sham ~ px(100),
-    TAC ~ px(100),
-    TAC_FMT_Post ~ px(120),
-    TAC_V ~ px(120),
-    TAC_V_Orn ~ px(100)
-  ) %>% 
-    tab_footnote(
-    footnote = "p-value: ~0 ‘***’, 0.001 ‘**’, 0.01 ‘*’, 0.05 ‘.’, 0.1 ‘ ’, 1",
-    locations = cells_title(groups = "title")
-  )
-
-```
-
 
 ## Comparison of Important Serum Metabolites (2022 vs 2024)
 ```{r include=FALSE}
@@ -625,9 +258,6 @@ summary(model_S2024)
 ```
 
 ```{r}
-library(dplyr)
-library(gt)
-
 table_S2022$Row <- 1:nrow(table_S2022)
 table_S2024$Row <- 1:nrow(table_S2024)
 
@@ -670,11 +300,6 @@ gt_table
 
 ## Significance of Serum Metabolite 2022 by Group
 ```{r}
-library(dplyr)
-library(tidyr)
-library(stringr)
-library(gt)
-# Fecal 2022
 gam_summary <- summary(model_S2022)
 
 smooth_terms <- as.data.frame(gam_summary$s.table)
@@ -719,14 +344,38 @@ smooth_wide %>%
 
 ```
 
+## Boxplots for Selected Metabolites (Serum 2022)
+```{r}
+serum2022_long <- serum2022 %>%
+  pivot_longer(cols = -c(Sample, Group), names_to = "Metabolite", values_to = "Value")
+
+serum2022_selected <- serum2022_long %>%
+  filter(Metabolite %in% vars_serum2022)
+
+# Plot
+p3 <- ggplot(serum2022_selected, aes(x = Metabolite, y = Value, fill = Group)) +
+  geom_boxplot() +
+  scale_fill_manual(
+    values = c("Sham" = "#1f77b4", "TAC" = "#ff7f0e", "TAC_V" = "#9467bd")
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Selected Metabolites (Serum 2022)",
+    x = "Metabolite", y = NULL,
+    fill = "Group"
+  ) +
+  coord_flip() +
+  theme(
+  axis.text.y = element_text(size = 10),
+  legend.title = element_text(size = 8),
+  legend.text = element_text(size = 6)
+)
+
+p3
+```
 
 ## Significance of Serum Metabolite 2024 by Group
 ```{r}
-library(dplyr)
-library(tidyr)
-library(stringr)
-library(gt)
-# Fecal 2022
 gam_summary <- summary(model_S2024)
 
 smooth_terms <- as.data.frame(gam_summary$s.table)
@@ -771,3 +420,595 @@ smooth_wide %>%
   )
 
 ```
+
+
+## Boxplots for Selected Metabolites (Serum 2024)
+```{r, fig.width=8, fig.height=10}
+serum2024_long <- serum2024 %>%
+  pivot_longer(cols = -c(Sample, Group), names_to = "Metabolite", values_to = "Value")
+
+serum2024_selected <- serum2024_long %>%
+  filter(Metabolite %in% vars_serum2024)
+
+# Plot
+p4 <- ggplot(serum2024_selected, aes(x = Metabolite, y = Value, fill = Group)) +
+  geom_boxplot() +
+  scale_fill_manual(
+    values = c("Sham" = "#1f77b4", "TAC" = "#ff7f0e", "TAC-Tryptamine (Oral)" = "#2ca02c", 
+               "TAC Tryptamine (IP)" = "red","TAC Tryptophan" = "#9467bd")
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Selected Metabolites (Serum 2024)",
+    x = "Metabolite", y = NULL,
+    fill = "Group"
+  ) +
+  coord_flip() +
+  theme(
+  axis.text.y = element_text(size = 10),
+  legend.title = element_text(size = 8),
+  legend.text = element_text(size = 6)
+)
+
+p4
+```
+
+
+## Comparison of Important Fecal Metabolites (2022 vs 2024)
+```{r warning=FALSE, message=FALSE, include=FALSE}
+Fecal2022 <- read_excel("E:/Ajit data analysis/Tac/Fecal metablomics 2022 set 1.xlsx")
+
+metabolites <- colnames(Fecal2022)[-1]
+
+
+clean_names <- gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolites)))
+
+clean_names <- gsub("^[0-9]+_|_[0-9]+_|_[0-9]+$|[0-9]+_", "", clean_names)
+
+# gsub("^_|_$", "", gsub("_+", "_", gsub("[() ]", "_", metabolites)))
+# gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolites)))
+
+colnames(Fecal2022)[-1] <- clean_names
+
+Fecal2022 <- Fecal2022 %>%
+  mutate(
+    Group = case_when(
+      grepl("WT-Sham", Sample) ~ "Sham",
+      grepl("WT-TAC-FMT-V", Sample) ~ "TAC_FMT_V",
+      grepl("WT-TAC-FMT-S", Sample) ~ "TAC_FMT_S",
+      grepl("WT-TAC-V", Sample) ~ "TAC_V",
+      grepl("WT-TAC-", Sample) & !grepl("FMT", Sample) & !grepl("-V", Sample) ~ "TAC",
+      TRUE ~ "Other"
+    ), .after = "Sample"
+  ) %>% 
+  mutate(Group = as.factor(Group))
+
+sample_info <- Fecal2022 %>% 
+  select(Sample, Group) %>% 
+  mutate(Group = as.factor(Group))
+
+metabolite_fecal2022 <- Fecal2022 %>% select(-Group)
+metabolite_fecal2022 <- metabolite_fecal2022 %>% column_to_rownames("Sample")
+
+mice_info <- read_excel("E:/Ajit data analysis/Tac/Tac ready to use.xlsx", 
+                        sheet = 6, 
+                        range = "A2:N31",
+                        col_names = TRUE) %>% 
+  select(-S.No, -Gender)
+colnames(mice_info)[colnames(mice_info) == "Group"] <- "Sample"
+  
+integrated_data <- Fecal2022 %>%
+  left_join(mice_info, by = "Sample") %>% 
+  select(-Purpose, -`Peak LS`, -`EF (%)`) %>% 
+  rename(
+    LV_Thickness = `LV Thickness (mm)`,
+    LVW_mg = `LVW (mg)`,
+    LVW_TL = `LVW/TL (mg/mm)`,
+    HW_TL = `HW/TL (mg/mm)`,
+    FS = `FS%`,
+    HW_mg = `HW (mg)`,
+    GLS = `GLS (%)`
+  ) %>% 
+  relocate(HW_mg, .after = Sample)
+head(integrated_data, 2)
+
+
+predictors <- setdiff(colnames(integrated_data), 
+                      c("Sample", "Group", "LV_Thickness", 
+                        "LVW_mg", "LVW_TL","HW_TL", "FS", "EF", "GLS", "HW_mg"))
+predictors
+
+
+n_pad <- 2 - length(predictors) %% 2
+if (n_pad < 2) predictors <- c(predictors, rep("", n_pad))
+
+predictor_matrix <- matrix(predictors, ncol = 2, byrow = TRUE)
+
+kable(predictor_matrix, col.names = c("Predictors", "Predictors"))
+
+set.seed(999)
+rf_data <- integrated_data[, c(predictors, "HW_mg")]
+rf_data <- na.omit(rf_data) 
+boruta_output <- Boruta(HW_mg ~ ., data = rf_data, doTrace = 2, maxRuns = 500, ntree = 1000)
+attribute_Boruta <- attStats(boruta_output)
+confirmed_var_fecal2022 <- getSelectedAttributes(boruta_output, withTentative = FALSE)
+confirmed_var_fecal2022
+# kable(confirmed_var_fecal2022, col.names = "IMPORTANT PRESDICTORS")
+
+boruta_list <- replicate(3, {
+  Boruta(HW_mg ~ ., data = rf_data, maxRuns = 500, ntree = 1000)
+}, simplify = FALSE)
+
+# confirmed metabolites from each run
+confirmed_lists <- lapply(boruta_list, function(b) {
+  rownames(attStats(b)[attStats(b)$decision == "Confirmed", ])
+})
+
+boruta_list
+vars_fecal2022 <- Reduce(intersect, confirmed_lists)
+kable(vars_fecal2022, col.names = "IMPORTANT PRESDICTORS")
+
+importance_fecal2022 <- attStats(boruta_output)
+
+importance_fecal2022 <- importance_fecal2022[order(-importance_fecal2022$meanImp), ]
+
+top15 <- head(importance_fecal2022, 15)
+
+table_F2022 <- data.frame(
+  Fecal_2022 = rownames(top15),
+  MeanImportance = top15$meanImp
+)
+
+print(table_F2022, row.names = FALSE)
+
+formula <- as.formula(paste("HW_mg ~", paste0("s(", vars_fecal2022, ", by = Group)", collapse = " + ")))
+model <- gam(formula, data = integrated_data, method = "REML", select  = TRUE)
+summary(model)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+Fecal2024 <- read_excel("E:\\Ajit data analysis\\Tac\\fecal 2024\\Fecal metablomics 2024.xlsx")
+
+
+metabolites <- colnames(Fecal2024)[-1]
+
+
+clean_names <- gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolites)))
+
+clean_names <- gsub("^[0-9]+_|_[0-9]+_|_[0-9]+$|[0-9]+_", "", clean_names)
+
+# gsub("^_|_$", "", gsub("_+", "_", gsub("[() ]", "_", metabolites)))
+# gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolites)))
+
+colnames(Fecal2024)[-1] <- clean_names
+
+
+metabolites <- colnames(Fecal2024)[-c(1, 2)]
+clean_names <- gsub("[() ]", "_", metabolites)
+colnames(Fecal2024)[-c(1, 2)] <- clean_names
+
+Fecal2024 <- Fecal2024 %>%
+  mutate(
+    Group = case_when(
+      grepl("WT-Sham", Sample) ~ "Sham",
+      grepl("WT-TAC-Post-V", Sample) ~ "TAC_FMT_Post",
+      grepl("WT-TAC-V-Orn-Ty-DI-", Sample) ~ "TAC_V_Orn",
+      grepl("WT-TAC-V", Sample) ~ "TAC_V",
+      grepl("WT-TAC-", Sample) & !grepl("FMT", Sample) & !grepl("-V", Sample) ~ "TAC",
+      TRUE ~ "Other"
+    ), .after = "Sample"
+  ) %>% 
+  mutate(Group = as.factor(Group))
+
+sample_info <- Fecal2024 %>% 
+  select(Sample, Group) %>% 
+  mutate(Group = as.factor(Group))
+
+metabolite_Fecal2024 <- Fecal2024 %>% select(-Group)
+metabolite_Fecal2024 <- metabolite_Fecal2024 %>% column_to_rownames("Sample")
+
+mice_info <- read_excel("E:/Ajit data analysis/Tac/Tac ready to use.xlsx", 
+                        sheet = 6, 
+                        range = "A33:N62",
+                        col_names = TRUE) %>% 
+  select(-S.No, -Gender)
+
+colnames(mice_info)[colnames(mice_info) == "Group"] <- "Sample"
+  
+integrated_data <- Fecal2024 %>%
+  left_join(mice_info, by = "Sample") %>% 
+  select(-Purpose, -`Peak LS`, -`EF (%)`) %>% 
+  rename(
+    LV_Thickness = `LV Thickness (mm)`,
+    LVW_mg = `LVW (mg)`,
+    LVW_TL = `LVW/TL (mg/mm)`,
+    HW_TL = `HW/TL (mg/mm)`,
+    FS = `FS%`,
+    HW_mg = `HW (mg)`,
+    GLS = `GLS (%)`
+  ) %>% 
+  relocate(HW_mg, .after = Sample)
+head(integrated_data, 2)
+predictors <- setdiff(colnames(integrated_data), 
+                      c("Sample", "Group", "LV_Thickness", 
+                        "LVW_mg", "LVW_TL","HW_TL", "FS", "EF", "GLS", "HW_mg"))
+head(predictors, 10)
+set.seed(999)
+rf_data <- integrated_data[, c(predictors, "HW_mg")]
+rf_data <- na.omit(rf_data) 
+boruta_output <- Boruta(HW_mg ~ ., data = rf_data, doTrace = 2, maxRuns = 300, ntree = 1000)
+attribute_Boruta <- attStats(boruta_output)
+confirmed_var_fecal2024 <- getSelectedAttributes(boruta_output, withTentative = FALSE)
+# confirmed_var_fecal2024
+# kable(confirmed_var_fecal2024, col.names = "IMPORTANT PRESDICTORS")
+
+boruta_list <- replicate(3, {
+  Boruta(HW_mg ~ ., data = rf_data, maxRuns = 300, ntree = 1000)
+}, simplify = FALSE)
+
+# confirmed metabolites from each run
+confirmed_lists <- lapply(boruta_list, function(b) {
+  rownames(attStats(b)[attStats(b)$decision == "Confirmed", ])
+})
+
+boruta_list
+vars_fecal2024 <- Reduce(intersect, confirmed_lists)
+kable(vars_fecal2024, col.names = "IMPORTANT PRESDICTORS")
+
+importance_fecal2024 <- attStats(boruta_output)
+
+importance_fecal2024 <- importance_fecal2024[order(-importance_fecal2024$meanImp), ]
+
+top15 <- head(importance_fecal2024, 15)
+
+table_F2024 <- data.frame(
+  Fecal_2024 = rownames(top15),
+  MeanImportance = top15$meanImp
+)
+
+print(table_F2024, row.names = FALSE)
+
+formula <- as.formula(paste("HW_mg ~", paste0("s(", vars_fecal2024, ", by = Group)", collapse = " + ")))
+model_F2024 <- gam(formula, data = integrated_data, method = "REML", select  = TRUE)
+summary(model_F2024)
+```
+
+```{r}
+table_F2022$Row <- 1:nrow(table_F2022)
+table_F2024$Row <- 1:nrow(table_F2024)
+
+
+colnames(table_F2022) <- c("table_F2022", "MeanImportance_2022", "Row")
+colnames(table_F2024) <- c("table_F2024", "MeanImportance_2024", "Row")
+
+
+comparison_table <- full_join(table_F2022, table_F2024, by = "Row") %>%
+  select(table_F2022, MeanImportance_2022, table_F2024, MeanImportance_2024)
+
+
+gt_table <- comparison_table %>%
+  gt() %>%
+  tab_header(
+    title = "Comparison of Important Fecal Metabolites (2022 vs 2024)"
+  ) %>%
+  cols_label(
+    table_F2022 = "Metabolites",
+    MeanImportance_2022 = "Mean Importance",
+    table_F2024 = "Metabolites",
+    MeanImportance_2024 = "Mean Importance"
+  ) %>%
+  tab_spanner(
+    label = "2022",
+    columns = c(table_F2022, MeanImportance_2022)
+  ) %>%
+  tab_spanner(
+    label = "2024",
+    columns = c(table_F2024, MeanImportance_2024)
+  ) %>%
+  fmt_number(
+    columns = c(MeanImportance_2022, MeanImportance_2024),
+    decimals = 4
+  )
+
+gt_table
+```
+
+
+## Significance of Fecal Metabolites 2022 by Group
+```{r}
+gam_summary <- summary(model)
+
+smooth_terms <- as.data.frame(gam_summary$s.table)
+
+smooth_terms$Term <- rownames(smooth_terms)
+
+smooth_terms <- smooth_terms %>%
+  mutate(
+    Metabolite = str_extract(Term, "(?<=s\\().+?(?=\\):)"),
+    Group = str_extract(Term, "(?<=\\:Group).*")
+  )
+
+smooth_terms <- smooth_terms %>%
+  mutate(Significance = case_when(
+    `p-value` < 0.001 ~ "***",
+    `p-value` < 0.01  ~ "**",
+    `p-value` < 0.05  ~ "*",
+    `p-value` < 0.1   ~ ".",
+    TRUE             ~ ""
+  ))
+
+smooth_wide <- smooth_terms %>%
+  select(Metabolite, Group, Significance) %>%
+  pivot_wider(names_from = Group, values_from = Significance)
+
+smooth_wide %>%
+  gt() %>%
+  tab_header(
+    title = "GAM Smooth Term Significance of Fecal 2022 Metabolites by Group",
+    subtitle = "Stars indicate level of significance for each metabolite-group interaction"
+  )%>%
+  cols_width(
+    Metabolite ~ px(200),
+    Sham ~ px(100),
+    TAC ~ px(100),
+    TAC_FMT_S ~ px(120),
+    TAC_FMT_V ~ px(120),
+    TAC_V ~ px(100)
+  ) %>% 
+    tab_footnote(
+    footnote = "p-value: ~0 ‘***’, 0.001 ‘**’, 0.01 ‘*’, 0.05 ‘.’, 0.1 ‘ ’, 1",
+    locations = cells_title(groups = "title")
+  )
+
+```
+
+
+## Boxplots for Selected Metabolites (Fecal 2022)
+```{r, fig.width=8, fig.height=10}
+Fecal2022_long <- Fecal2022 %>%
+  pivot_longer(cols = -c(Sample, Group), names_to = "Metabolite", values_to = "Value")
+
+Fecal2022_selected <- Fecal2022_long %>%
+  filter(Metabolite %in% vars_fecal2022)
+
+# Plot
+p1 <- ggplot(Fecal2022_selected, aes(x = Metabolite, y = Value, fill = Group)) +
+  geom_boxplot() +
+  scale_fill_manual(
+    values = c("Sham" = "#1f77b4", "TAC" = "#ff7f0e", "TAC_FMT_S" = "#2ca02c", "TAC_FMT_V" = "#d62728", "TAC_V" = "#9467bd" )
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Selected Metabolites (Fecal2022)",
+    x = "Metabolite", y = NULL,
+    fill = "Group"
+  ) +
+  coord_flip() +
+  theme(
+  axis.text.y = element_text(size = 10),
+  legend.title = element_text(size = 8),
+  legend.text = element_text(size = 6)
+)
+
+p1
+```
+
+## Significance of Fecal Metabolites 2024 by Group
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(gt)
+
+gam_summary <- summary(model_F2024)
+
+smooth_terms <- as.data.frame(gam_summary$s.table)
+
+smooth_terms$Term <- rownames(smooth_terms)
+
+smooth_terms <- smooth_terms %>%
+  mutate(
+    Metabolite = str_extract(Term, "(?<=s\\().+?(?=\\):)"),
+    Group = str_extract(Term, "(?<=\\:Group).*")
+  )
+
+smooth_terms <- smooth_terms %>%
+  mutate(Significance = case_when(
+    `p-value` < 0.001 ~ "***",
+    `p-value` < 0.01  ~ "**",
+    `p-value` < 0.05  ~ "*",
+    `p-value` < 0.1   ~ ".",
+    TRUE             ~ ""
+  ))
+
+smooth_wide <- smooth_terms %>%
+  select(Metabolite, Group, Significance) %>%
+  pivot_wider(names_from = Group, values_from = Significance)
+
+smooth_wide %>%
+  gt() %>%
+  tab_header(
+    title = "GAM Smooth Term Significance of Fecal 2024 Metabolites by Group",
+    subtitle = "Stars indicate level of significance for each metabolite-group interaction"
+  )%>%
+  cols_width(
+    Metabolite ~ px(200),
+    Sham ~ px(100),
+    TAC ~ px(100),
+    TAC_FMT_Post ~ px(120),
+    TAC_V ~ px(120),
+    TAC_V_Orn ~ px(100)
+  ) %>% 
+    tab_footnote(
+    footnote = "p-value: ~0 ‘***’, 0.001 ‘**’, 0.01 ‘*’, 0.05 ‘.’, 0.1 ‘ ’, 1",
+    locations = cells_title(groups = "title")
+  )
+
+```
+
+## Boxplots for Selected Metabolites (Fecal 2024)
+```{r, fig.width=8, fig.height=10}
+Fecal2024_long <- Fecal2024 %>%
+  pivot_longer(cols = -c(Sample, Group), names_to = "Metabolite", values_to = "Value")
+
+Fecal2024_selected <- Fecal2024_long %>%
+  filter(Metabolite %in% vars_fecal2024)
+
+# Plot
+p2 <- ggplot(Fecal2024_selected, aes(x = Metabolite, y = Value, fill = Group)) +
+  geom_boxplot() +
+  scale_fill_manual(
+    values = c("Sham" = "#1f77b4", "TAC" = "#ff7f0e", "TAC_FMT_Post" = "#2ca02c", "TAC_V" = "#9467bd", "TAC_V_Orn" = "#d62728")
+  )  +
+  theme_minimal() +
+  labs(
+    title = "Selected Metabolites (Fecal 2024)",
+    x = "Metabolite", y = NULL,
+    fill = "Group"
+  ) +
+  coord_flip() +
+  theme(
+  axis.text.y = element_text(size = 10),
+  legend.title = element_text(size = 8),
+  legend.text = element_text(size = 6)
+)
+
+p2
+```
+
+## Sample Counts by Group and Dataset
+```{r}
+count_fecal2022 <- Fecal2022 %>%
+  count(Group) %>%
+  rename(Fecal2022 = n)
+
+count_fecal2024 <- Fecal2024 %>%
+  count(Group) %>%
+  rename(Fecal2024 = n)
+
+count_serum2022 <- serum2022 %>%
+  count(Group) %>%
+  rename(serum2022 = n)
+
+count_serum2024 <- serum2024 %>%
+  count(Group) %>%
+  rename(serum2024 = n)
+
+summary_table <- count_fecal2022 %>%
+  full_join(count_fecal2024, by = "Group") %>%
+  full_join(count_serum2022, by = "Group") %>%
+  full_join(count_serum2024, by = "Group")
+
+summary_table[is.na(summary_table)] <- 0
+
+summary_table <- summary_table %>% arrange(Group)
+
+summary_table <- summary_table %>%
+  bind_rows(summary_table %>% 
+              summarise(across(.cols = everything(), 
+                               ~ {
+                                 if (is.numeric(.)) 
+                                 sum(., na.rm = TRUE) 
+                               else "Total"
+                                 }
+                               )))
+
+
+summary_table %>%
+  gt() %>%
+  tab_header(
+    title = md("**Sample Counts by Group and Dataset**"),
+    subtitle = md("*Across fecal and serum datasets from 2022 and 2024*")
+  ) %>%
+  cols_label(
+    Group = "Group",
+    Fecal2022 = "Fecal 2022",
+    Fecal2024 = "Fecal 2024",
+    serum2022 = "Serum 2022",
+    serum2024 = "Serum 2024"
+  ) %>%
+  fmt_number(
+    columns = c(Fecal2022, Fecal2024, serum2022, serum2024),
+    decimals = 0
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Group == "Total")
+  ) %>%
+  tab_source_note(
+    source_note = "Note: There is no information on heart weight for Sham in the Serum 2024 dataset."
+  ) %>%
+  tab_options(
+    table.font.size = "medium",
+    data_row.padding = px(4),
+    source_notes.border.bottom.width = px(0),
+    table.border.bottom.width = px(0),
+    table.border.top.width = px(0)
+  )
+```
+
+```{r}
+# ggplot(Fecal2024_selected, aes(x = Metabolite, y = Value, fill = Group)) +
+#   geom_boxplot(outlier.shape = NA, width = 0.6, alpha = 0.9) +  # cleaner boxes
+#   geom_jitter(position = position_jitterdodge(jitter.width = 0.2), size = 0.6, alpha = 0.4) +  # optional raw data
+#   scale_fill_manual(
+#     values = c(
+#       "Sham" = "#1f77b4",        # Blue
+#       "TAC" = "#ff7f0e",         # Orange
+#       "TAC_FMT_Post" = "#2ca02c",# Green
+#       "TAC_V" = "#9467bd",       # Purple
+#       "TAC_V_Orn" = "#d62728"    # Red
+#     )
+#   ) +
+#   scale_y_continuous(
+#     name = "Relative Abundance", 
+#     expand = expansion(mult = c(0.05, 0.1))
+#   ) +
+#   labs(
+#     title = "Group-wise Comparison of Selected Fecal Metabolites (2024)",
+#     x = NULL,
+#     fill = "Experimental Group"
+#   ) +
+#   coord_flip() +
+#   theme_minimal(base_size = 12) +
+#   theme(
+#     plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+#     axis.text.y = element_text(size = 10, face = "bold"),
+#     axis.text.x = element_text(size = 10),
+#     axis.title.x = element_text(size = 10),
+#     legend.title = element_text(size = 8),
+#     legend.text = element_text(size = 6),
+#     panel.grid.major.y = element_blank(),  # optional: cleaner y grid
+#     panel.grid.minor = element_blank()
+#   )
+
+# ggplot(Fecal2024_selected, aes(x = Metabolite, y = Value, fill = Group)) +
+#   geom_boxplot(outlier.shape = NA) +  # No clutter from outliers
+#   scale_fill_manual(
+#     values = c("Sham" = "#1f77b4", "TAC" = "#ff7f0e", "TAC_FMT_Post" = "#2ca02c", 
+#                "TAC_V" = "#9467bd", "TAC_V_Orn" = "#d62728")
+#   ) +
+#   coord_flip() +
+#   labs(
+#     title = "Group-wise Comparison of Selected Fecal Metabolites (2024)",
+#     x = NULL,
+#     y = "Relative Abundance",
+#     fill = "Experimental Group"
+#   ) +
+#   theme_minimal(base_size = 13) +
+#   theme(
+#     plot.title = element_text(face = "bold", size = 14),
+#     axis.text.y = element_text(size = 10, , face = "bold"),
+#     legend.title = element_text(size = 8),
+#     legend.text = element_text(size = 6)
+#   )
+```
+
+
+
+
+
