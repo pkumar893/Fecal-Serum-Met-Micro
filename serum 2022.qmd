@@ -1,0 +1,377 @@
+---
+title: "serum 2022 Analysis"
+author: "Prashant Kumar"
+format: 
+  html:
+    code-fold: true
+    toc: true
+    toc-location: right
+    embed-resources: true
+editor: source
+---
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(readxl)
+library(dplyr)
+library(stringr)
+library(gt)
+library(ggplot2)
+library(openxlsx)
+library(tidyverse)
+library(ropls)  # For PLS-DA
+library(pheatmap)
+library(RColorBrewer)
+library(ggpubr)
+library(factoextra)
+library(FactoMineR)
+library(limma)
+library(igraph)
+library(WGCNA)
+library(ggraph)
+library(pathview)
+library(clusterProfiler)
+library(tibble)
+library(corrplot)
+library(ggforce)
+library(ggrepel)
+library(knitr)
+```
+
+
+## Data cleaning
+```{r}
+serum2022 <- read_excel("~\\Tac\\serum 2022\\serum metablomics 2022.xlsx")
+
+metabolite <- colnames(serum2022)[-1]
+
+clean_names <- gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolite)))
+
+clean_names <- gsub("^[0-9]+_|_[0-9]+_|_[0-9]+$|[0-9]+_", "", clean_names)
+
+# gsub("^_|_$", "", gsub("_+", "_", gsub("[() ]", "_", metabolite)))
+# gsub("^_|_$", "", gsub("_+", "_", gsub("[-() ]", "_", metabolite)))
+
+colnames(serum2022)[-1] <- clean_names
+
+
+metabolite <- colnames(serum2022)[-c(1, 2)]
+clean_names <- gsub("[() ]", "_", metabolite)
+colnames(serum2022)[-c(1, 2)] <- clean_names
+
+
+serum2022 <- serum2022 %>% 
+  rename(Sample = Group) 
+
+serum2022 <- serum2022 %>% 
+  mutate(
+    Group = case_when(
+      grepl("WT-Sham", Sample) ~ "Sham",
+      grepl("WT-TAC-V", Sample) ~ "TAC_V",
+      grepl("WT-TAC-", Sample) & !grepl("FMT", Sample) & !grepl("-V", Sample) ~ "TAC",
+      TRUE ~ "Other"
+    ), .after = "Sample"
+  ) %>% 
+  mutate(Group = as.factor(Group))
+
+sample_info <- serum2022 %>% select(Sample, Group) %>% mutate(Group = as.factor(Group))
+metabolite_serum2022 <- serum2022 %>% select(-Group)
+
+metabolite_serum2022 <- metabolite_serum2022 %>% column_to_rownames("Sample")
+
+# # Transpose to have metabolite as rows
+# metabolite_serum2022_t <- t(metabolite_serum2022)
+
+```
+
+* Metabolite names were cleaned to ensure compatibility with downstream tools. Group classification was inferred from sample IDs using string matching. Expression and metadata were split for modularity.
+
+## Mice info and Combine info.
+```{r}
+mice_info <- read_excel("~/Tac/Tac ready to use.xlsx", 
+                        sheet = 6, 
+                        range = "A2:N20",
+                        col_names = TRUE) %>% 
+  select(-S.No, -Gender)
+
+colnames(mice_info)[colnames(mice_info) == "Group"] <- "Sample"
+  
+integrated_data <- serum2022 %>%
+  left_join(mice_info, by = "Sample") %>% 
+  select(-Purpose, -`Peak LS`, -`EF (%)`) %>% 
+  rename(
+    LV_Thickness = `LV Thickness (mm)`,
+    LVW_mg = `LVW (mg)`,
+    LVW_TL = `LVW/TL (mg/mm)`,
+    HW_TL = `HW/TL (mg/mm)`,
+    FS = `FS%`,
+    HW_mg = `HW (mg)`,
+    GLS = `GLS (%)`
+  ) %>% 
+  relocate(HW_mg, .after = Sample)
+head(integrated_data, 2)
+```
+
+* Heart weight and associated cardiac phenotypes were merged with metabolomic profiles by mouse ID. Variable renaming standardizes clinical traits for consistency.
+
+## Over All Predictors
+```{r message=FALSE, warning=FALSE}
+predictors <- setdiff(colnames(integrated_data), 
+                      c("Sample", "Group", "LV_Thickness", 
+                        "LVW_mg", "LVW_TL","HW_TL", "FS", "EF", "GLS", "HW_mg"))
+head(predictors, 10)
+```
+
+* Non-cardiac, non-group variables were selected as predictors for model fitting. These correspond to fecal metabolite concentrations.
+
+## PCA with group distribution
+```{r message=FALSE, warning=FALSE}
+scaled_Serum2022 <- scale(metabolite_serum2022)
+pca_result <- prcomp(scaled_Serum2022, scale. = TRUE)
+pca_summary <- summary(pca_result)
+
+scores_df <- data.frame(
+  PC1   = pca_result$x[, 1],
+  PC2   = pca_result$x[, 2],
+  Group = factor(sample_info$Group, levels = unique(sample_info$Group))
+)
+
+# 2)convex-hull points for each group
+hulls <- scores_df %>%
+  group_by(Group) %>%
+  slice(chull(PC1, PC2)) %>%
+  ungroup()
+
+# 3) points + smooth “curvy” hull lines
+pca_plot <- ggplot(scores_df, aes(x = PC1, y = PC2, color = Group)) +
+  geom_point(size = 2, alpha = 0.5) +
+
+  geom_bspline_closed(
+    data   = hulls,
+    aes(x = PC1, y = PC2, group = Group, fill = Group, color = Group),
+    n      = 70,
+    size   = 0.8,
+    alpha  = 0.2 
+  ) +
+
+  scale_color_manual(
+    values = c("Sham" = "#1f77b4", "TAC" = "#ff7f0e", "TAC_V" = "#9467bd")
+  ) +
+  scale_fill_manual(
+    values = c("Sham" = "#1f77b4", "TAC" = "#ff7f0e", "TAC_V" = "#9467bd")
+  ) +
+
+  labs(
+    title = "PCA of Serum metabolite Profiles",
+    x     = "PC1",
+    y     = "PC2"
+  ) +
+
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white"),
+    plot.background  = element_rect(fill = "white"),
+    panel.grid.major = element_line(color = "gray", size = 0.5),
+    panel.grid.minor = element_line(color = "gray", size = 0.25),
+    legend.position  = "top"
+  )
+
+pca_plot
+# ggsave("~/Tac/new analysis/serum 2022/PCA_serum_2024.png",
+#        plot = pca_plot, width = 10, height = 8, dpi = 800)
+```
+
+## Generalised regulation regression model
+```{r message=FALSE, warning=FALSE}
+library(glmnet)
+predictors <- setdiff(colnames(integrated_data), 
+                      c("Sample", "Group", "LV_Thickness", 
+                        "LVW_mg", "LVW_TL","HW_TL", "FS", "EF", "GLS", "HW_mg"))
+
+# Preparing data (converting to matrix)
+x <- as.matrix(integrated_data[, predictors])
+y <- integrated_data$HW_mg
+
+
+# Fit LASSO
+fit_lasso <- cv.glmnet(x, y, alpha = 0, family = "gaussian", nfolds = 5, standardize = TRUE)
+
+# summary(fit_lasso)
+
+# Extracting coefficients from  ridge model
+coefs <- as.matrix(coef(fit_lasso, s = "lambda.min"))
+coefs_df <- data.frame(metabolites = rownames(coefs), Coef = as.numeric(coefs))
+intercept <- coefs[1, 1] # The predicted heart mass for a sample with average levels of all metabolites
+coefs_df <- coefs_df[coefs_df$metabolites != "(Intercept)", ]  # exclude intercept
+
+
+# Multiplying metabolite matrix (x) by coefficients to get the combined effect
+combined_effect_values <- as.vector(x %*% coefs_df$Coef + intercept)
+
+# Creating data frame with real HW_mg and combined effect
+combined_effect <- data.frame(
+  Sample = seq_len(length(y)),
+  Actual_HW_mg = as.numeric(y),
+  CombinedEffect = combined_effect_values
+)
+
+combined_effect$Sample <- serum2022$Sample
+combined_effect$group <- serum2022$Group
+
+# Plot actual heart mass vs. combined metabolite effect
+
+p2 <- ggplot(combined_effect, aes(x = CombinedEffect, y = Actual_HW_mg, color = group)) +
+  geom_point(size = 3) +
+  geom_text_repel(aes(label = Sample), size = 2, max.overlaps = 100) +  # Sample labels
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", color = "darkred") +
+  labs(
+    x = "Combined metabolite Effect (linear combination)",
+    y = "Heart Weight (mg)",
+    title = "Combined Effect of metabolites on Heart Weight",
+    caption = "Samples labeled"
+  ) + 
+  scale_color_manual(
+    name = "Group",
+    values = c("Sham" = "#1f77b4", "TAC" = "#ff7f0e", "TAC_V" = "#9467bd"),
+    labels = c("Sham", "TAC", "TAC_V")
+  ) +
+  theme_classic() +
+  theme(
+    text = element_text(family = "sans"),
+    panel.background = element_blank(),
+    panel.grid.major = element_line(color = "gray80", size = 0.5),
+    axis.title.x = element_text(size = 15, face = "italic", ),
+    axis.title.y = element_text(size = 15, face = "italic"),
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 10, face = "italic"),
+    plot.caption = element_text(size = 8, face = "italic"),
+    plot.title = element_text(size = 20, face = "bold.italic")
+  )
+p2
+ 
+ # ggsave("~/Tac/new analysis/serum 2022/Overall Effect of metabolites on Heart Weight nfold 5.png",
+ #        p2,
+ #        width = 10, height = 7,
+ #        dpi = 600)
+
+p3 <- ggplot(combined_effect, aes(x = CombinedEffect, y = Actual_HW_mg, color = group)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "gam", formula = y ~ s(x, k = 5), se = TRUE) + 
+  geom_text_repel(aes(label = Sample), size = 2, max.overlaps = 100) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", color = "darkred") +
+  labs(
+    x = "Combined Metabolite Effect (linear combination)",
+    y = "Heart Weight (mg)",
+    title = "Combined Effect of Metabolites on Heart Weight",
+    caption = "Samples labeled"
+  ) + 
+  scale_color_manual(
+    name = "Group",
+    values = c("Sham" = "#1f77b4", "TAC" = "#ff7f0e", "TAC_V" = "#9467bd"),
+    labels = c("Sham", "TAC", "TAC_V")
+  ) +
+  theme_classic() +
+  theme(
+    text = element_text(family = "sans"),
+    panel.background = element_blank(),
+    panel.grid.major = element_line(color = "gray80", size = 0.5),
+    axis.title.x = element_text(size = 15, face = "italic"),
+    axis.title.y = element_text(size = 15, face = "italic"),
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 10, face = "italic"),
+    plot.caption = element_text(size = 8, face = "italic"),
+    plot.title = element_text(size = 20, face = "bold.italic")
+  )
+p3
+# ggsave("~/Tac/new analysis/serum 2022/Overall Effect of Metabolites on Heart Weight each group range.png",
+#        p3,
+#        width = 10, height = 7,
+#        dpi = 600)
+```
+
+* Combine Effect of Metabolites Findings:
+  * Group-specific patterns:
+    * Sham: 
+      * Sham has low metabolite scores (~150-170) and low heart weights (~120–150 mg).
+      * Metabolite changes in Sham do not strongly alter heart weight.
+
+    * TAC: 
+      * TAC show much higher heart weights (~160–230 mg) for similar metabolite scores compared to Sham.
+      * Their curve bends and levels off, that means once TAC hearts enlarge, further metabolite changes do not increase weight linearly.
+
+    * TAC FMT Post: TAC mice that received a post-surgery fecal microbiota transplant (FMT) show a marked downward shift in heart weight relative to untreated TAC mice. This group have heart mass closer to 150–170mg and somewhat leftward, indicating that the combined metabolite effect is reduced as well.
+    
+    * TAC V: 
+      * TAC_V fall between Sham and TAC, but their curve rises more steadily with metabolite effect.
+      * Their heart weights range ~150–250 mg.
+
+## Boruta analysis 
+```{r message=FALSE, warning=FALSE}
+library(Boruta)
+set.seed(999)
+rf_data <- integrated_data[, c(predictors, "HW_mg")]
+rf_data <- na.omit(rf_data) 
+boruta_output <- Boruta(HW_mg ~ ., data = rf_data, doTrace = 2, maxRuns = 200, ntree = 1000)
+attribute_Boruta <- attStats(boruta_output)
+confirmed_var_serum2022 <- getSelectedAttributes(boruta_output, withTentative = FALSE)
+# kable(confirmed_var_serum2022, col.names = "IMPORTANT PRESDICTORS")
+
+boruta_list <- replicate(3, {
+  Boruta(HW_mg ~ ., data = rf_data, maxRuns = 200, ntree = 1000)
+}, simplify = FALSE)
+
+# confirmed metabolites from each run
+confirmed_lists <- lapply(boruta_list, function(b) {
+  rownames(attStats(b)[attStats(b)$decision == "Confirmed", ])
+})
+
+boruta_list
+vars_serum2022 <- Reduce(intersect, confirmed_lists)
+kable(vars_serum2022, col.names = "IMPORTANT PRESDICTORS")
+```
+**Findings:** <br>
+
+* Boruta feature selection with 200 iterations confirmed 5 (`r vars_serum2022`) metabolites as statistically important over shadow variables. This method complements RF by offering a robust non-parametric significance test, reducing the risk of overfitting.
+
+## Boruta Important variable bar plot
+```{r, fig.width=10, fig.height=7}
+par(mar = c(15, 4, 4, 4))
+# plot(boruta_output, las = 2, cex.axis = 0.8, cex.lab = 1, cex.main = 1, xlab = "", main = "Important Variable")
+
+plot(boruta_list[[1]], las = 2, cex.axis = 0.8, cex.lab = 1, cex.main = 1, xlab = "", main = "Important Variable")
+
+# # Plot results
+# png("~/Tac/new analysis/serum 2022/final trend of metabolites.png",
+#     width = 30, height = 20, units = "in", res = 300)
+# par(mar = c(30, 10, 10, 10))
+# plot(boruta_list[[1]], las = 2, cex.axis = 1.5, cex.lab = 2, cex.main = 3, xlab = "", main = "Important Variable")
+# dev.off()
+```
+
+## Important Serum Metabolites
+```{r}
+importance_serum2022 <- attStats(boruta_output)
+
+importance_serum2022 <- importance_serum2022[order(-importance_serum2022$meanImp), ]
+
+top15 <- head(importance_serum2022, 15)
+
+table_S2022 <- data.frame(
+  Serum_2022 = rownames(top15),
+  MeanImportance = top15$meanImp
+)
+
+print(table_S2022, row.names = FALSE)
+```
+
+## Checking Significant Metabolites using common Predictors of Boruta
+```{r, message=FALSE, warning=FALSE}
+library(mgcv)
+formula <- as.formula(paste("HW_mg ~", paste0("s(", vars_serum2022, ", by = Group)", collapse = " + ")))
+model_S2022 <- gam(formula, data = integrated_data, method = "REML", select  = TRUE)
+summary(model_S2022)
+```
+
